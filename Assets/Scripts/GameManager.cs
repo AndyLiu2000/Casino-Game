@@ -17,15 +17,12 @@ public class GameManager : MonoBehaviour {
 
         Debug.Log("SystemLanguage = " + Application.systemLanguage.ToString());
 
-        //读取数据表
-        //DataManager.ReadDatas();
-
         //读设置
         if (PlayerPrefs.HasKey("IsSaved"))
         {
             //读档
             Debug.Log("Loading Option....");
-            //需要清档测试的时候就取消注释运行一下
+            //需要清档测试的时候就取消注释运行一下if you want to delete your saves,then run the code below
             //PlayerPrefs.DeleteAll();
             AudioManager.BgVolume = PlayerPrefs.GetFloat("MusicVolume");
             AudioManager.IsSoundOn = bool.Parse(PlayerPrefs.GetString("IsSoundOn"));

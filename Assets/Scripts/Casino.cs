@@ -2,7 +2,17 @@
 using UnityEngine;
 
 public class Casino : MonoBehaviour {
-
+    //const
+    const int USER_INIT_CHIPS = 3000;
+    const int BET = 60;
+    const int RANK = 1;
+    const float WIN_RATE = 3.0f;
+    const int ROTATION_BEGIN = 50;
+    const int SLOT_NUM = 20;
+    const int RECHARGE_NUM = 3000;
+    const int TWEEN_TIME = 1500;
+    const int WHEEL_NUMBER = 5;
+    //game objects
     public GameObject LabelWin;
     public GameObject UpBtn;
     public GameObject DownBtn;
@@ -11,22 +21,30 @@ public class Casino : MonoBehaviour {
     public GameObject HowToPlayPanel;
     public GameObject SpinBtn;
     public GameObject AutoSpinBtn;
+    public GameObject RechargeBtn;
+    public GameObject Audio_Spin;
+    public GameObject Audio_Scroll;
+    public GameObject Audio_ScrollEnd;
+    public GameObject Audio_WinSound;
+    //components
     UILabel LabelBetNum;
     UILabel LabelChipsNum;
     UILabel LabelCreditNum;
-
-    public static int UserChips = 3000;
-    public static int Bet = 60;
-    public static int Rank = 1;
+    //static parameters
+    public static int UserChips = USER_INIT_CHIPS;
+    public static int Bet = BET;
+    public static int Rank = RANK;
     public static int CurrentBet = Bet * Rank;
-    public static float WinRate = 3.0f;
+    public static float WinRate = WIN_RATE;
     static int WinNum = 0;
-
-    int[] Rotation = new int[5];
-    int RotationBegin = 50;
-    int SlotNum = 20;
-    const int RechargeNum = 3000;
-
+    //private parameters
+    int[] Rotation = new int[WHEEL_NUMBER];
+    GameObject[] ScrollSlots = new GameObject[WHEEL_NUMBER];
+    GameObject[] UIWrapContents = new GameObject[WHEEL_NUMBER];
+    int RotationBegin = ROTATION_BEGIN;
+    int SlotNum = SLOT_NUM;
+    int RechargeNum = RECHARGE_NUM;
+    //status parameters
     bool isUpActive;
     bool isDownActive;
 
@@ -35,11 +53,11 @@ public class Casino : MonoBehaviour {
     bool IsAutoSpin = false;
 
     float tempWinNum = 0;
-    int tweenTime = 1500;
+    int tweenTime = TWEEN_TIME;
     bool isTweenText = false;
 
+    //object collections
     Cards[] cards;
-    public const int ScrollChildrenNum = 1;
     public static Dictionary<string, GameObject> SlotDic = new Dictionary<string, GameObject>();
     public static GameObject[,] ResultSlots = new GameObject[5, 3];
 
@@ -48,16 +66,22 @@ public class Casino : MonoBehaviour {
     {
         DataManager.ReadDatas();
         cards = new Cards[DataManager.Cards_Card.Count];
-        foreach (Cards_Sheet c in DataManager.Cards_Card)
+        foreach (Cards_Sheet card in DataManager.Cards_Card)
         {
-            int index = int.Parse(c.ID);
+            int index = int.Parse(card.ID);
             cards[index] = new Cards(int.Parse(DataManager.Cards_Card[index].Value),
                 (DirectionType)(int.Parse(DataManager.Cards_Card[index].DirectionType)),
                 (CardType)(int.Parse(DataManager.Cards_Card[index].CardType)),
                 DataManager.Cards_Card[index].ImgName);
         }
 
-        //读取Chips值
+        for(int i = 0; i < ScrollSlots.Length; i++)
+        {
+            ScrollSlots[i] = GameObject.Find("ScrollSlot" + (i + 1));
+            UIWrapContents[i] = GameObject.Find("UIWrapContent" + (i + 1));
+        }
+
+        //读取Chips值 load chips
         if (PlayerPrefs.HasKey("IsSaved"))
         {
             //读档
@@ -66,7 +90,6 @@ public class Casino : MonoBehaviour {
             UserChips = int.Parse(PlayerPrefs.GetString("Chips"));
             Rank = int.Parse(PlayerPrefs.GetString("Rank"));
             
-
             Debug.Log("Load Option In Casino Complete");
         }
 
@@ -102,11 +125,11 @@ public class Casino : MonoBehaviour {
         }
 
         HowToPlayPanel.SetActive(false);
+        SpinBtn.SetActive(true);
+        AutoSpinBtn.SetActive(false);
 
         for (int i = 1; i <= Rotation.Length; i++)
         {
-            GameObject scrollSLot = GameObject.Find("ScrollSlot" + i);
-            GameObject uiwrapcontent = GameObject.Find("UIWrapContent" + i);
             for (int j = 1; j <= SlotNum; j++)
             {
                 GameObject slot = Resources.Load("Slot") as GameObject;
@@ -117,121 +140,132 @@ public class Casino : MonoBehaviour {
                 slot.GetComponent<UISprite>().spriteName = slot.GetComponent<Slot>().Card.ImgName;
                 slot.GetComponent<Slot>().Color = slot.GetComponent<UISprite>().color;
 
-                GameObject s = NGUITools.AddChild(uiwrapcontent, slot);
+                GameObject s = NGUITools.AddChild(UIWrapContents[i-1], slot);
 
                 s.transform.localPosition = pos;
                 SlotDic.Add(slot.name, s);
             }
-            //重排位置
-            uiwrapcontent.GetComponent<UICenterOnChild>().Recenter();
+            //重排位置 recenter to align with the scrollview
+            UIWrapContents[i-1].GetComponent<UICenterOnChild>().Recenter();
         }
 
         GameObject scrollSLot5 = GameObject.Find("ScrollSlot" + 5);
-        scrollSLot5.GetComponent<UIScrollView>().onStoppedMoving += delegate () {
-            GameObject.Find(AudioManager.SCROLL).GetComponent<AudioSource>().Stop();
-            GameObject.Find(AudioManager.SCROLLEND).GetComponent<AudioSource>().Play();
-            //延迟一秒再结算，这一秒等待Scrollview对齐；如果不等待，结果会出错
-            Invoke("CalResult", 1.0f);
-        };
+        scrollSLot5.GetComponent<UIScrollView>().onStoppedMoving += ScrollSlot5_onStoppedMoving;
 
-        SpinBtn.SetActive(true);
-        AutoSpinBtn.SetActive(false);
-
-        UIEventListener.Get(AutoSpinBtn).onClick = delegate (GameObject btn) {
-            GameObject.Find(AudioManager.SPIN).GetComponent<AudioSource>().Play();
-            IsAutoSpin = false;
-            SpinBtn.SetActive(true);
-            AutoSpinBtn.SetActive(false);
-        };
-
-        UIEventListener.Get(SpinBtn).onClick = ClickSpinBtn;
-
-        UIEventListener.Get(SpinBtn).onPress = delegate (GameObject go, bool isPressed)
-        {
-            IsSpinPressed = isPressed;
-        };
-
-        UIEventListener.Get(GameObject.Find("RechargeBtn")).onClick = delegate (GameObject btn)
-        {
-            Debug.Log("RechargeBtn");
-            UserChips += RechargeNum;
-            LabelChipsNum.text = UserChips.ToString();
-            if (UserChips > 0) SpinBtn.GetComponent<UIButton>().isEnabled = true;
-        };
-
-        UIEventListener.Get(UpBtn).onClick = delegate (GameObject btn)
-        {
-            Debug.Log("UpBtn");
-            GameObject.Find(AudioManager.SPIN).GetComponent<AudioSource>().Play();
-            if(Rank < 5)
-            {
-                Rank++;
-                CurrentBet = Rank * Bet;
-                LabelBetNum.text = CurrentBet.ToString();
-                LabelCreditNum.text = Rank.ToString();
-                if(Rank == 5)
-                {
-                    isUpActive = false;
-                    UpBtn.SetActive(isUpActive);
-                }
-                else
-                {
-                    isDownActive = true;
-                    DownBtn.SetActive(isDownActive);
-                }
-                PlayerPrefs.SetString("Rank", Rank.ToString());
-            }
-        };
-
-        UIEventListener.Get(DownBtn).onClick = delegate (GameObject btn)
-        {
-            Debug.Log("DownBtn");
-            GameObject.Find(AudioManager.SPIN).GetComponent<AudioSource>().Play();
-            if (Rank >1)
-            {
-                Rank--;
-                CurrentBet = Rank * Bet;
-                LabelBetNum.text = CurrentBet.ToString();
-                LabelCreditNum.text = Rank.ToString();
-                if (Rank == 1)
-                {
-                    isDownActive = false;
-                    DownBtn.SetActive(isDownActive);
-                }
-                else
-                {
-                    isUpActive = true;
-                    UpBtn.SetActive(isUpActive);
-                }
-                PlayerPrefs.SetString("Rank", Rank.ToString());
-            }
-        };
-
-        UIEventListener.Get(H2PBtn).onClick = delegate (GameObject btn)
-        {
-            Debug.Log("H2PBtn");
-            HowToPlayPanel.SetActive(true);
-        };
-
-        UIEventListener.Get(CasinoBtn).onClick = delegate (GameObject btn)
-        {
-            Debug.Log("CasinoBtn");
-            HowToPlayPanel.SetActive(false);
-        };
+        UIEventListener.Get(AutoSpinBtn).onClick = AutoSpinBtn_onClick;
+        UIEventListener.Get(SpinBtn).onClick = SpinBtn_onClick;
+        UIEventListener.Get(SpinBtn).onPress = SpinBtn_onPress;
+        UIEventListener.Get(RechargeBtn).onClick = RechargeBtn_onClick;
+        UIEventListener.Get(UpBtn).onClick = UpBtn_onClick;
+        UIEventListener.Get(DownBtn).onClick = DownBtn_onClick;
+        UIEventListener.Get(H2PBtn).onClick = H2PBtn_onClick;
+        UIEventListener.Get(CasinoBtn).onClick = CasinoBtn_onClick;
     }
 
-    void ClickSpinBtn(GameObject go)
+    /// <summary>
+    /// When the last scrollslot stops
+    /// </summary>
+    void ScrollSlot5_onStoppedMoving()
+    {
+        Audio_Scroll.GetComponent<AudioSource>().Stop();
+        Audio_ScrollEnd.GetComponent<AudioSource>().Play();
+        //延迟一秒再结算，这一秒等待Scrollview对齐；如果不等待，结果会出错
+        //delay 1 second for scrollview so that it aligns and stops totally;if not, there will be some unpridicatable bugs
+        Invoke("CalResult", 1.0f);
+    }
+
+    void AutoSpinBtn_onClick(GameObject go)
+    {
+        Audio_Spin.GetComponent<AudioSource>().Play();
+        IsAutoSpin = false;
+        SpinBtn.SetActive(true);
+        AutoSpinBtn.SetActive(false);
+    }
+
+    void SpinBtn_onPress(GameObject go, bool isPressed)
+    {
+        IsSpinPressed = isPressed;
+    }
+
+    void RechargeBtn_onClick(GameObject go)
+    {
+        Debug.Log("RechargeBtn");
+        UserChips += RechargeNum;
+        LabelChipsNum.text = UserChips.ToString();
+        if (UserChips > 0)
+            SpinBtn.GetComponent<UIButton>().isEnabled = true;
+    }
+
+    void DownBtn_onClick(GameObject go)
+    {
+        Debug.Log("DownBtn");
+        Audio_Spin.GetComponent<AudioSource>().Play();
+        if (Rank > 1)
+        {
+            Rank--;
+            CurrentBet = Rank * Bet;
+            LabelBetNum.text = CurrentBet.ToString();
+            LabelCreditNum.text = Rank.ToString();
+            if (Rank == 1)
+            {
+                isDownActive = false;
+                DownBtn.SetActive(isDownActive);
+            }
+            else
+            {
+                isUpActive = true;
+                UpBtn.SetActive(isUpActive);
+            }
+            PlayerPrefs.SetString("Rank", Rank.ToString());
+        }
+    }
+
+    void UpBtn_onClick(GameObject go)
+    {
+        Debug.Log("UpBtn");
+        Audio_Spin.GetComponent<AudioSource>().Play();
+        if (Rank < 5)
+        {
+            Rank++;
+            CurrentBet = Rank * Bet;
+            LabelBetNum.text = CurrentBet.ToString();
+            LabelCreditNum.text = Rank.ToString();
+            if (Rank == 5)
+            {
+                isUpActive = false;
+                UpBtn.SetActive(isUpActive);
+            }
+            else
+            {
+                isDownActive = true;
+                DownBtn.SetActive(isDownActive);
+            }
+            PlayerPrefs.SetString("Rank", Rank.ToString());
+        }
+    }
+
+    void H2PBtn_onClick(GameObject go)
+    {
+        Debug.Log("H2PBtn");
+        HowToPlayPanel.SetActive(true);
+    }
+
+    void CasinoBtn_onClick(GameObject go)
+    {
+        Debug.Log("CasinoBtn");
+        HowToPlayPanel.SetActive(false);
+    }
+
+    void SpinBtn_onClick(GameObject go)
     {
         Debug.Log("SpinBtn");
         UpBtn.SetActive(false);
         DownBtn.SetActive(false);
-        GameObject.Find(AudioManager.SPIN).GetComponent<AudioSource>().Play();
+        Audio_Spin.GetComponent<AudioSource>().Play();
         SpinBtn.GetComponent<UIButton>().isEnabled = false;
         LabelWin.SetActive(false);
         for (int i = 1; i <= Rotation.Length; i++)
         {
-            GameObject scrollSLot = GameObject.Find("ScrollSlot" + i);
-            GameObject uiwrapcontent = GameObject.Find("UIWrapContent" + i);
             for (int j = 1; j <= SlotNum; j++)
             {
                 int randomCardIndex = Random.Range(0, cards.Length);
@@ -253,10 +287,13 @@ public class Casino : MonoBehaviour {
             }
             //这里修改过UIScrollView里的代码，使scrollview快速停下来，触发onStoppedMoving委托
             //这里还改过UICenterOnChild，使重新居中的操作在onStoppedMoving时触发一下，保证最后总是转动到居中的位置来保证对齐
-            scrollSLot.GetComponent<UIScrollView>().Scroll(RotationBegin * i);
+            ScrollSlots[i-1].GetComponent<UIScrollView>().Scroll(RotationBegin * i);
         }
     }
 
+    /// <summary>
+    /// Calculate result
+    /// </summary>
     void CalResult()
     {
         Debug.Log("CalResult");
@@ -278,55 +315,57 @@ public class Casino : MonoBehaviour {
         }
 
         //计算分数
-        //三横排：1，2，3号线赢
+        //三横排：1，2，3号线赢 line 1,2,3 win
         //WinNum += Line1_2_3Win();
         WinNum += Formula.Win1_2_3();
 
         //右斜排
-        //4号线赢
+        //4号线赢 line 4 win
         WinNum += Formula.Win4_8(0, 3, 1, 4);
-        //8号线赢
+        //8号线赢 line 8 win
         WinNum += Formula.Win4_8(1, 0, 2, 1);
-        //5号线赢
+        //5号线赢 line 5 win
         WinNum += Formula.Win5_6_7(0, 2, 1, 3, 2, 4);
-        //6号线赢
+        //6号线赢 line 6 win
         WinNum += Formula.Win5_6_7(0, 1, 1, 2, 2, 3);
-        //7号线赢
+        //7号线赢 line 7 win
         WinNum += Formula.Win5_6_7(0, 0, 1, 1, 2, 2);
 
         //左斜排
-        //9号线赢
+        //9号线赢 line 9 win
         WinNum += Formula.Win9_13(1, 4, 2, 3);
-        //13号线赢
+        //13号线赢 line 13 win
         WinNum += Formula.Win9_13(0, 1, 1, 0);
-        //12号线赢
+        //12号线赢 line 12 win
         WinNum += Formula.Win10_11_12(0, 2, 1, 1, 2, 0);
-        //11号线赢
+        //11号线赢 line 11 win
         WinNum += Formula.Win10_11_12(0, 3, 1, 2, 2, 1);
-        //10号线赢
+        //10号线赢 line 10 win
         WinNum += Formula.Win10_11_12(0, 4, 1, 3, 2, 2);
         //下折线赢
-        //14号线赢
+        //14号线赢 line 14 win
         WinNum += Formula.Win14(0, 0, 1, 1, 2, 2, 1, 3, 0, 4);
         //上折线赢
-        //15号线赢
+        //15号线赢 line 15 win
         WinNum += Formula.Win15(2, 0, 1, 1, 0, 2, 1, 3, 2, 4);
 
-        //SkyWheel赢
+        //SkyWheel赢 SkyWheel win
         WinNum += Formula.Win_SkyWheel();
-        //汇总结算
+        //汇总结算 conclude
         if(WinNum > 0)
         {
             LabelWin.SetActive(true);
             isTweenText = true;
-            Invoke("ExecuteResult", tweenTime * 1.0f / 1000 + 1.0f);
+            Invoke("ExecuteResult", tweenTime * 1.0f / 1000 + 0.5f);
         }
         else ExecuteResult();
     }
 
+    //conclude result
     void ExecuteResult()
     {
-        if(WinNum>0) GameObject.Find(AudioManager.WINSOUND).GetComponent<AudioSource>().Play();
+        if(WinNum>0)
+            Audio_WinSound.GetComponent<AudioSource>().Play();
         isTweenText = false;
         LabelWin.GetComponent<UILabel>().text = WinNum.ToString();
         UserChips = UserChips - CurrentBet + WinNum;
@@ -342,7 +381,7 @@ public class Casino : MonoBehaviour {
         }
         else
         {
-            if (IsAutoSpin) ClickSpinBtn(null);
+            if (IsAutoSpin) SpinBtn_onClick(null);
         }
         tempWinNum = 0;
         WinNum = 0;
@@ -387,11 +426,11 @@ public class Casino : MonoBehaviour {
             SpinPressedTime += Time.fixedDeltaTime;
             if (SpinPressedTime >= 1.0f)
             {
-                //切换为自动摇奖
+                //切换为自动摇奖 switch to auto-spin
                 IsAutoSpin = true;
                 SpinBtn.SetActive(false);
                 AutoSpinBtn.SetActive(true);
-                ClickSpinBtn(null);
+                SpinBtn_onClick(null);
                 SpinPressedTime = 0.0f;
                 IsSpinPressed = false;
             }
@@ -402,6 +441,7 @@ public class Casino : MonoBehaviour {
             if (tempWinNum < WinNum)
             {
                 tempWinNum += WinNum * Time.fixedDeltaTime / (tweenTime * 1.0f/1000);
+                if (tempWinNum > WinNum) tempWinNum = WinNum;
                 LabelWin.GetComponent<UILabel>().text = ((int)tempWinNum).ToString();
             }
         }
